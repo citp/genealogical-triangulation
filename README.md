@@ -56,7 +56,7 @@ members will be generated and saved to population.pickle with Python's
 pickle format.
 
 
-### Gather samples
+### Simulate population to generate distributions
 
 To run experiments in rust first convert the population to a format rust can understand.: `python3
 run_classify_relationship.py population.pickle work_dir 100
@@ -81,7 +81,7 @@ be in the `work_dir`. If `num_iterations` is 0, no experiments will be
 run, but rather the distributions will be calculated immediately.
 
 
-### Identify
+### Identify individuals
 
 The final step is identifying unlabeled individuals.
 

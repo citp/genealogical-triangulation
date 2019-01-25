@@ -8,7 +8,7 @@ Identification will require 16+GB of RAM for populations with generations of 100
 Python Requirements
 -----------
 
-* Python 3.4+ or Python 3.3+ with [enum](https://pypi.python.org/pypi/enum34) package
+* Python 3.4+
 * scipy/numpy
 * Cython
 * Statsmodels

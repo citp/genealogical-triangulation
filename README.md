@@ -1,7 +1,7 @@
 Getting Started
 ===============
 
-This project requires both [Rust](https://www.rust-lang.org/) and [Python](https://www.python.org/). Populations are generated in Python. Repeated simulation for generating distributions is performed in Rust, with IBD values being output to a directory. The output is then read in on the python side and serialized. Identification tasks are performed in Python.
+This project requires both [Rust](https://www.rust-lang.org/) and [Python](https://www.python.org/). Populations are generated in Python, then exported to a json file. Rust reads the population file, then runs simulations to generate IBD data, outputting the data to a directory. The output is then read in on the python side, fit to hurdle-gamma distributions and serialized. Identification tasks are performed in Python using the hurdle-gamma distributions.
 
 Identification will require 16+GB of RAM for populations with generations of 100k individuals.
 

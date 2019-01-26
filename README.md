@@ -5,6 +5,13 @@ This project requires both [Rust](https://www.rust-lang.org/) and [Python](https
 
 Identification will require 16+GB of RAM for populations with generations of 100k individuals.
 
+System requirements
+-----------
+
+* Python
+* Rust
+* GNU scientific library (GSL)
+
 Python Requirements
 -----------
 

@@ -43,11 +43,11 @@ Work flow
 
 The typical work flow is a three step process
 
-1. Generate population - `python3 generate_population.py --help`
-2. Export population to Rust - `python3 export_population.py --help`
-4. Run simulations in rust - `cargo run --release --bin simulate -- --help`
-5. Import output from simulations - `python3 import_simulation.py --help`
-6. Identify - `python3 evaluate_deanonymize.py --help`
+1. Generate population - In the `python` directory - `python3 generate_population.py --help`
+2. Export population to Rust - In the `python` directory - `python3 export_population.py --help`
+4. Run simulations in rust - In the `rust` directory - `cargo run --release --bin simulate -- --help`
+5. Import output from simulations - In the `python` directory - `python3 import_simulation.py --help`
+6. Identify - In the `python` directory - `python3 evaluate_deanonymize.py --help`
 
 Commands
 --------

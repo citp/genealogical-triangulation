@@ -1,17 +1,17 @@
 from collections import namedtuple
 from heapq import nlargest
+from statistics import median
 
 # import pyximport; pyximport.install()
 import numpy as np
 
 from classify_relationship import LengthClassifier
+from calculate_probabilities import calculate_probabilities
 from data_logging import write_log
 from util import first_missing_ancestor, all_related
 
 #TODO: Change this tuple, the last two values are not used.
-ProbabilityData = namedtuple("ProbabilityData", ["start_i", "stop_i",
-                                                 "cryptic_start_i",
-                                                 "cryptic_stop_i"])
+ProbabilityData = namedtuple("ProbabilityData", ["node", "start_i", "stop_i", "cryptic_prob"])
 
 RawIdentified = namedtuple("RawIdentified", ["sibling_group",
                                              "ln_ratio",
@@ -22,7 +22,8 @@ INF_REPLACE = 1.0
 
 class BayesDeanonymize:
     def __init__(self, population, classifier = None, only_related = False,
-                 search_generations_back = 7, cryptic_logging = False):
+                 search_generations_back = 7, cryptic_logging = False,
+                 probability_logging = True):
         self._population = population
         if classifier is None:
             self._length_classifier = LengthClassifier(population, 1000)
@@ -35,7 +36,11 @@ class BayesDeanonymize:
             self._compute_related()
         self._restrict_search_nodes = None
         self.cryptic_logging = cryptic_logging
-        # self.__remove_erroneous_labeled()
+        self._exclude_search = set()
+        self.exclude_anchors = set()
+        self.probability_logging = probability_logging
+        self._genome_nodes_cache = list(member for member in population.members
+                                        if member.genome is not None)
 
     def __remove_erroneous_labeled(self):
         print("Removing erroneous labeled nodes")
@@ -52,25 +57,46 @@ class BayesDeanonymize:
               " New size is {}.".format(len(to_remove), len(new_labeled)))
         self._length_classifier._labeled_nodes = list(new_labeled)
 
-    def _to_search(self, shared_list, sex):
-        labeled = set(self._length_classifier._labeled_nodes)
-        genome_nodes = set(member for member in self._population.members
-                           if (member.genome is not None and
-                               member._id not in labeled and
-                               member.sex == sex))
-        if not self._only_related:
-            return genome_nodes
+    @property
+    def exclude_from_search(self):
+        return self._exclude_search
+
+    @exclude_from_search.setter
+    def exclude_from_search(self, to_exclude):
+        self._exclude_search = set(to_exclude)
+
+
+    def _to_search_basic(self, sex):
+        genome_nodes = set(member for member in self._genome_nodes_cache
+                           if member.sex == sex)
         id_map = self._population.id_mapping
+        genome_nodes.difference_update(id_map[x] for x
+                                       in self._length_classifier._labeled_nodes)
+        return genome_nodes
+
+    def _to_search_related(self, shared_list, sex):
         potential_nodes = set()
+        id_map = self._population.id_mapping
         for labeled_node_id, shared in shared_list:
             if shared > 0:
                 labeled_node = id_map[labeled_node_id]
                 related = self._labeled_related[labeled_node]
-                potential_nodes.update(related)
+                potential_nodes.update(node for node in related
+                                       if node.sex == sex)
         if self._restrict_search_nodes is not None:
             return potential_nodes.intersection(self._restrict_search_nodes)
         else:
             return potential_nodes
+
+    def _to_search(self, shared_list, sex):
+        if self._only_related:
+            ret = self._to_search_related(shared_list, sex)
+        else:
+            ret = self._to_search_basic(sex)
+
+        if len(self._exclude_search) != 0:
+            ret -= self._exclude_search
+        return ret
 
     def _add_node_id_relatives(self, node_id, nodes):
         id_map = self._population.id_mapping
@@ -87,11 +113,16 @@ class BayesDeanonymize:
             self._add_node_id_relatives(labeled_node_id, nodes)
 
     def add_labeled_node_id(self, node_id):
+        if node_id in self._length_classifier._labeled_nodes:
+            return
         self._length_classifier._labeled_nodes.append(node_id)
         if self._only_related:
             nodes = list(member for member in self._population.members
                          if member.genome is not None)
             self._add_node_id_relatives(node_id, nodes)
+
+    def remove_labeled_node_id(self, node_id):
+        self._length_classifier._labeled_nodes.remove(node_id)
 
     def restrict_search(self, nodes):
         self._restrict_search_nodes = set(nodes)
@@ -101,82 +132,92 @@ class BayesDeanonymize:
         length_classifier = self._length_classifier
         # TODO: Eliminated shared_list and use shared_dict everywhere
         shared_list = []
-        for labeled_node_id in length_classifier._labeled_nodes:
+        anchors = set(length_classifier._labeled_nodes) - self.exclude_anchors
+        sorted_labeled = sorted(anchors)
+        np_sorted_labeled = np.array(sorted_labeled, dtype = np.uint32)
+        sorted_shared = []
+        for labeled_node_id in sorted_labeled:
             labeled_node = id_map[labeled_node_id]
             s = segment_detector.shared_segment_length(genome,
                                                        labeled_node.suspected_genome)
             shared_list.append((labeled_node_id, s))
+            sorted_shared.append(s)
 
+        write_log("positive ibd count", sum(0.0 < x for x in sorted_shared))
+        #write_log("shared", sorted_shared)
         shared_dict = dict(shared_list)
-        labeled_nodes = set(length_classifier._labeled_nodes)
+        sorted_shared = np.array(sorted_shared, dtype = np.float64)
 
         labeled_nodes_cryptic, all_lengths = list(zip(*shared_dict.items()))
-        # We convert to python floats, as summing is faster.
-        all_cryptic_possibilities = [float(x) for x
-                                     in np.log(length_classifier.get_batch_smoothing_gamma(all_lengths))]
-        # Maps labeled nodes to the log cryptic value of the IBD detected
-        cryptic_lookup = dict(zip(labeled_nodes_cryptic,
-                                  all_cryptic_possibilities))
-        node_data = dict()
-        batch_node_id = []
-        batch_labeled_node_id = []
+        np_cryptic = np.log(length_classifier.get_batch_smoothing_gamma(sorted_shared))
+
+        node_data = []
+        batch_shape = []
+        batch_scale = []
+        batch_zero_prob = []
         batch_lengths = []
         # Keep for logging purposes
         # batch_cryptic_lengths = []
-        node_cryptic_log_probs = dict()
-        by_unlabeled = length_classifier.group_by_unlabeled
         nodes = self._to_search(shared_list, actual_node.sex)
         if len(nodes) == 0:
             # We have no idea which node it is
             return RawIdentified(set(), float("-inf"), None)
-        
-        empty = set()
-        for node in nodes:
-            node_start_i = len(batch_node_id)
-            node_id = node._id
-            cryptic_probability = 0
-            node_cryptic_log_probs[node] = 0
 
-            cryptic_nodes = labeled_nodes - by_unlabeled.get(node_id, empty)
-            if len(cryptic_nodes) > 0:
-                cryptic_probability = sum(cryptic_lookup[labeled_node_id]
-                                          for labeled_node_id
-                                          in cryptic_nodes)
-                node_cryptic_log_probs[node] = cryptic_probability
+
         
-            non_cryptic_nodes = list(labeled_nodes - cryptic_nodes)
-            if len(non_cryptic_nodes) > 0:
-                batch_node_id.extend([node_id] * len(non_cryptic_nodes))
-                batch_labeled_node_id.extend(non_cryptic_nodes)
-                batch_lengths.extend(shared_dict[labeled_node_id]
-                                     for labeled_node_id in non_cryptic_nodes)
+        for node in nodes:
+            node_start_i = len(batch_shape)
+            node_id = node._id
+            #node_cryptic_log_probs[node] = 0
+
+            if node_id in length_classifier._distributions:
+                labeled_ids, shape, scale, zero_prob = length_classifier._distributions[node_id]
+            else:
+                labeled_ids = np.array([], dtype = np.uint32)
+                shape = scale = zero_prob = np.array([], dtype = np.float64)
+            calc_data = calculate_probabilities(labeled_ids,
+                                                shape, scale, zero_prob,
+                                                sorted_shared,
+                                                np_sorted_labeled,
+                                                np_cryptic,
+                                                node_id)
+            cur_lengths, cur_shapes, cur_scales, cur_zero_prob, cur_cryptic = calc_data
+            batch_lengths.extend(cur_lengths)
+            batch_shape.extend(cur_shapes)
+            batch_scale.extend(cur_scales)
+            batch_zero_prob.extend(cur_zero_prob)
             
-            node_stop_i = len(batch_node_id)
-            #TODO: change this tuple, remove the last two values.
-            node_data[node] = ProbabilityData(node_start_i, node_stop_i,
-                                              -1, -1) 
+            node_stop_i = len(batch_shape)
+            node_data.append(ProbabilityData(node, node_start_i, node_stop_i,
+                                             cur_cryptic))
+
 
         assert len(node_data) > 0
         if len(batch_lengths) > 0:
-            pdf_vals = length_classifier.get_batch_pdf(batch_lengths,
-                                                       batch_node_id,
-                                                       batch_labeled_node_id)
+            pdf_vals = length_classifier.batch_pdf_distributions(batch_lengths,
+                                                                 batch_shape,
+                                                                 batch_scale,
+                                                                 batch_zero_prob)
             calc_prob, zero_replace = pdf_vals
         else:
             calc_prob = []
 
+        log_calc_prob_cum = np.cumsum(np.log(calc_prob))
+        del calc_prob
+        log_calc_prob_cum = np.concatenate(([0.0], log_calc_prob_cum))
         node_probabilities = dict()
-        for node, prob_data in node_data.items():
-            start_i, stop_i, cryptic_start_i, cryptic_stop_i = prob_data
-            node_calc = calc_prob[start_i:stop_i]
-            log_prob = (np.sum(np.log(node_calc)) +
-                        node_cryptic_log_probs[node])
+        for node, start_i, stop_i, cryptic_prob in node_data:
+            log_prob = (log_calc_prob_cum[stop_i] - log_calc_prob_cum[start_i]) + cryptic_prob
             node_probabilities[node] = log_prob
         assert len(node_probabilities) > 0
-        write_log("identify", {"node": actual_node._id,
-                               "probs": {node._id: prob
-                                         for node, prob
-                                         in node_probabilities.items()}})
+        if self.probability_logging:
+            write_log("identify", {"node": actual_node._id,
+                                   "probs": {node._id: prob
+                                             for node, prob
+                                             in node_probabilities.items()}})
+
+        if len(node_probabilities) == 0:
+            return  RawIdentified(set(), -INF, None)
         # The value 8 is somewhat arbitrary. We are always able to
         # generate our confidence value with the top 8, as sibships
         # tend to be small. This number may need to be larger for
@@ -192,9 +233,13 @@ class BayesDeanonymize:
             next_log_prob = log_prob
             break
         else:
-            next_node, next_log_prob = potential_nodes[1]
-                
-        log_ratio  = top_log_prob - next_log_prob
+            if len(potential_nodes) > 1:
+                next_node, next_log_prob = potential_nodes[1]
+
+        if len(potential_nodes) > 1:
+            log_ratio  = top_log_prob - next_log_prob
+        else:
+            log_ratio = -INF
         return RawIdentified(get_sibling_group(top), log_ratio, top)
 
 def _get_logging_cryptic_lengths(shared_dict, cryptic_nodes, unique_lengths):

@@ -22,6 +22,11 @@ CHROMOSOME_ORDER = list(range(1, 23))
 NUM_CHROMS = len(CHROMOSOME_ORDER)
 
 RecombGenome = namedtuple("RecombGenome", ["mother", "father"])
+# This is necessary because the genome contains numpy arrays, which
+# are not hashable. This is just reference equality.
+def recomb_genome_hash(self):
+    return hash(id(self))
+RecombGenome.__hash__ = recomb_genome_hash
 
 class RecombGenomeGenerator():
     def __init__(self, chromosome_lengths):
@@ -230,6 +235,7 @@ class Recombinator():
                             for _ in range(recomb_events)]
         recomb_locations.sort()
         loci = []
+        # TODO: Can interp1d be used here?
         for location in recomb_locations:
             index = bisect_left(self._end_points[chrom], location)
             end_point = self._end_points[chrom][index]

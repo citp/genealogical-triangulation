@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 import numpy as np
 
 # import pyximport; pyximport.install()
-from common_segments import common_homolog_segments, _consolidate_sequence
+from common_segments import common_homolog_segments, _consolidate_sequence, merge_overlaps, subtract_region, size_of_overlap, remove_inbreeding
 
 from cm import cm_lengths, cumulative_cm
 
@@ -277,6 +277,134 @@ class TestCmLengths(unittest.TestCase):
         expect = np.array([0.00215], dtype = np.float64)
         np.testing.assert_almost_equal(lengths, expect)
         
+class TestMergeOverlaps(unittest.TestCase):
+    def test_empty(self):
+        self.assertEqual(merge_overlaps([], []), [])
+        self.assertEqual(merge_overlaps([], [(1, 2)]), [(1, 2)])
+        self.assertEqual(merge_overlaps([(1, 2)], []), [(1, 2)])
 
+    def test_single(self):
+        self.assertEqual(merge_overlaps([(1, 2)], [(1, 2)]), [(1, 2)])
+        self.assertEqual(merge_overlaps([(1, 2)], [(4, 5)]), [(1, 2), (4, 5)])
+        self.assertEqual(merge_overlaps([(4, 5)], [(1, 2)]), [(1, 2), (4, 5)])
+        self.assertEqual(merge_overlaps([(1, 2)], [(1, 4)]), [(1, 4)])
+        self.assertEqual(merge_overlaps([(1, 4)], [(1, 2)]), [(1, 4)])
+
+    def test_many(self):
+        self.assertEqual(merge_overlaps([(1, 2), (5, 8), (10, 15), (20, 25)],
+                                        [(9, 18)]),
+                         [(1, 2), (5, 8), (9, 18), (20, 25)])
+
+class TestSubtractRegion(unittest.TestCase):
+
+    def test_single(self):
+        self.assertEqual(subtract_region([(1, 2)], (1, 2)), [])
+        self.assertEqual(subtract_region([(1, 10)], (5, 10)), [(1, 5)])
+        self.assertEqual(subtract_region([(1, 10)], (1, 5)), [(5, 10)])
+        self.assertEqual(subtract_region([(1, 10)], (2, 8)), [(1, 2), (8, 10)])
+        self.assertEqual(subtract_region([(1, 10)], (15, 20)), [(1, 10)])
+        self.assertEqual(subtract_region([(10, 20)], (1, 10)), [(10, 20)])
+
+    def test_multiple(self):
+        # Exact matches
+        self.assertEqual(subtract_region([(1, 10), (20, 30), (40, 50)],
+                                         (1, 10)), [(20, 30), (40, 50)])
+        self.assertEqual(subtract_region([(1, 10), (20, 30), (40, 50)],
+                                         (20, 30)), [(1, 10), (40, 50)])
+        self.assertEqual(subtract_region([(1, 10), (20, 30), (40, 50)],
+                                         (40, 50)), [(1, 10), (20, 30)])
+
+        # no matches
+        self.assertEqual(subtract_region([(1, 10), (20, 30), (40, 50)],
+                                         (60, 70)),
+                         [(1, 10), (20, 30), (40, 50)])
+        self.assertEqual(subtract_region([(1, 10), (20, 30), (40, 50)],
+                                         (0, 1)),
+                         [(1, 10), (20, 30), (40, 50)])
+        self.assertEqual(subtract_region([(1, 10), (20, 30), (40, 50)],
+                                         (12, 18)),
+                         [(1, 10), (20, 30), (40, 50)])
+        
+
+        # sub region matches
+        self.assertEqual(subtract_region([(1, 10), (20, 30), (40, 50)],
+                                         (5, 10)),
+                         [(1, 5), (20, 30), (40, 50)])
+
+        self.assertEqual(subtract_region([(1, 10), (20, 30), (40, 50)],
+                                         (5, 12)),
+                         [(1, 5), (20, 30), (40, 50)])
+
+    def test_remove_multiple(self):
+        self.assertEqual(subtract_region([(1, 10), (20, 30), (40, 50)],
+                                         (5, 25)),
+                         [(1, 5), (25, 30), (40, 50)])
+        self.assertEqual(subtract_region([(1, 10), (20, 30), (40, 50)],
+                                         (5, 45)),
+                         [(1, 5), (45, 50)])
+        self.assertEqual(subtract_region([(1, 10), (20, 30), (40, 50)],
+                                         (5, 50)),
+                         [(1, 5)])
+
+
+class TestSizeOfOverlap(unittest.TestCase):
+
+    def test_single(self):
+        self.assertEqual(size_of_overlap([(1, 2)], (1, 2)), 1)
+        self.assertEqual(size_of_overlap([(1, 10)], (5, 10)), 5)
+        self.assertEqual(size_of_overlap([(1, 10)], (1, 5)), 4)
+        self.assertEqual(size_of_overlap([(1, 10)], (2, 8)), 6)
+        self.assertEqual(size_of_overlap([(1, 10)], (15, 20)), 0)
+        self.assertEqual(size_of_overlap([(10, 20)], (1, 10)), 0)
+
+    def test_multiple(self):
+        # Exact matches
+        self.assertEqual(size_of_overlap([(1, 10), (20, 30), (40, 50)],
+                                         (1, 10)), 9)
+        self.assertEqual(size_of_overlap([(1, 10), (20, 30), (40, 50)],
+                                         (20, 30)), 10)
+        self.assertEqual(size_of_overlap([(1, 10), (20, 30), (40, 50)],
+                                         (40, 50)), 10)
+
+        # no matches
+        self.assertEqual(size_of_overlap([(1, 10), (20, 30), (40, 50)],
+                                         (60, 70)), 0)
+        self.assertEqual(size_of_overlap([(1, 10), (20, 30), (40, 50)],
+                                         (0, 1)), 0)
+        self.assertEqual(size_of_overlap([(1, 10), (20, 30), (40, 50)],
+                                         (12, 18)), 0)
+        
+
+        # sub region matches
+        self.assertEqual(size_of_overlap([(1, 10), (20, 30), (40, 50)],
+                                         (5, 10)), 5)
+
+        self.assertEqual(size_of_overlap([(1, 10), (20, 30), (40, 50)],
+                                         (5, 12)), 5)
+
+    def test_remove_multiple(self):
+        self.assertEqual(size_of_overlap([(1, 10), (20, 30), (40, 50)],
+                                         (5, 25)), 10)
+        self.assertEqual(size_of_overlap([(1, 10), (20, 30), (40, 50)],
+                                         (5, 45)), 20)
+        self.assertEqual(size_of_overlap([(1, 10), (20, 30), (40, 50)],
+                                         (5, 50)), 25)
+
+class TestRemoveInbreeding(unittest.TestCase):
+    def test_single(self):
+        self.assertEqual(remove_inbreeding([(10, 20)], [(10, 20)], [(10, 20)]),
+                         [(10, 20)])
+        self.assertEqual(remove_inbreeding([(10, 20)], [(10, 20)], []),
+                         [(10, 20), (10, 20)])
+        self.assertEqual(remove_inbreeding([(10, 20)], [(10, 20)], [(30, 40)]),
+                         [(10, 20), (10, 20)])
+        self.assertEqual(remove_inbreeding([(10, 20), (20, 30)],
+                                           [(10, 20)], [(10, 20)]),
+                         [(10, 20), (20, 30)])
+        self.assertEqual(remove_inbreeding([(10, 20)],
+                                           [(10, 20), (20, 30)], [(10, 20)]),
+                         [(10, 20), (20, 30)])
+
+    
 if __name__ == '__main__':
     unittest.main()

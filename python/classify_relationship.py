@@ -5,23 +5,26 @@ from os.path import join, exists, abspath, dirname
 from shutil import rmtree
 from warnings import warn
 from random import shuffle, getstate, setstate, seed
+from math import sqrt
 
 from scipy.stats import gamma
 import numpy as np
-from progressbar import progressbar
+from tqdm import tqdm
 
-from common_segments import common_segment_lengths
+from unpack_params import unpack_params
 from data_logging import write_log
-from population_genomes import generate_genomes
 from population_statistics import all_ancestors_of
-from gamma import fit_hurdle_gamma
+from gamma import fit_hurdle_gamma, fit_hurdle_gamma_vector
 from cm import centimorgan_data_from_directory
 from shared_segment_detector import SharedSegmentDetector
+from read_binary_simulation import BinarySimulationDeserializer
 
 ZERO_REPLACE = 1e-12
 
 GammaParams = namedtuple("GammaParams", ["shape", "scale"])
 HurdleGammaParams = namedtuple("HurdleGammaParams", ["shape", "scale", "zero_prob"])
+DistributionData = namedtuple('DistributionData',
+                              ['labeled', 'shape', 'scale', 'zero_prob'])
 
 DEFAULT_SMOOTHING = HurdleGammaParams(1.2088571040214136, 11686532.312642237, 0.9876864782229996)
 
@@ -51,30 +54,12 @@ class LengthClassifier:
     @smoothing_parameters.setter
     def smoothing_parameters(self, params):
         self._cryptic_distribution = params
-
-    @property
-    def group_by_unlabeled(self):
-        try:
-            by_unlabeled = self._by_unlabeled
-        except AttributeError:
-            by_unlabeled = None
-            
-        if by_unlabeled is not None:
-            return by_unlabeled
-
-        by_unlabeled = defaultdict(set)
-        for unlabeled_id, labeled_id in self._distributions.keys():
-            by_unlabeled[unlabeled_id].add(labeled_id)
-
-        by_unlabeled = dict(by_unlabeled)
-        self._by_unlabeled = by_unlabeled
-        return by_unlabeled
         
 
     def get_batch_smoothing_gamma(self, lengths):
         shape, scale, zero_prob = self.smoothing_parameters
-        lengths = np.asarray(lengths, np.uint32)
-        zero_i = (lengths == 0)
+        lengths = np.asarray(lengths, np.float64)
+        zero_i = (lengths == 0.0)
         nonzero_i = np.invert(zero_i)
         ret = np.empty_like(lengths, dtype = np.float64)
         gamma_probs = gamma.pdf(lengths[nonzero_i], a = shape, scale = scale)
@@ -87,7 +72,7 @@ class LengthClassifier:
     def get_batch_pdf(self, lengths, query_nodes, labeled_nodes):
         assert len(lengths) == len(query_nodes) == len(labeled_nodes)
         assert len(lengths) > 0
-        lengths = np.array(lengths, dtype = np.uint32)
+        lengths = np.array(lengths, dtype = np.float64)
         zero_i = (lengths == 0)
         nonzero_i = np.invert(zero_i)
         distributions = self._distributions
@@ -99,6 +84,31 @@ class LengthClassifier:
         scales = np.array(shape_scale_zero[1], dtype = np.float64)
         zero_prob = np.array(shape_scale_zero[2], dtype = np.float64)
         del shape_scale_zero
+        ret = np.empty_like(lengths, dtype = np.float64)
+        ret[zero_i] = zero_prob[zero_i]
+        gamma_probs = gamma.pdf(lengths[nonzero_i],
+                                a = shapes[nonzero_i],
+                                scale = scales[nonzero_i])
+        gamma_probs = gamma_probs * (1 - zero_prob[nonzero_i])
+        ret[nonzero_i] = gamma_probs
+        leq_zero = (ret <= 0.0)
+        ret[leq_zero] = ZERO_REPLACE
+        # ret[ret > 1.0] = 1.0
+        return (ret, leq_zero)
+
+    def batch_pdf_distributions(self, lengths, shapes, scales, zero_prob):
+        assert len(lengths) == len(shapes) == len(scales) == len(zero_prob)
+        assert len(lengths) > 0
+        lengths = np.array(lengths, dtype = np.float64)
+        shapes = np.asarray(shapes, dtype = np.float64)
+        scales = np.asarray(scales, dtype = np.float64)
+        zero_prob = np.asarray(zero_prob, dtype = np.float64)
+        zero_i = (lengths == 0)
+        nonzero_i = np.invert(zero_i)
+        # shape_scale_zero = list(zip(*params))
+        # shapes = np.array(shape_scale_zero[0], dtype = np.float64)
+        # scales = np.array(shape_scale_zero[1], dtype = np.float64)
+        # zero_prob = np.array(shape_scale_zero[2], dtype = np.float64)
         ret = np.empty_like(lengths, dtype = np.float64)
         ret[zero_i] = zero_prob[zero_i]
         gamma_probs = gamma.pdf(lengths[nonzero_i],
@@ -124,12 +134,18 @@ def related_pairs(unlabeled_nodes, labeled_nodes, population, generations):
     if type(labeled_nodes) != set:
         labeled_nodes = set(labeled_nodes)
     ancestors = dict()
+    print("Computing ancestors.")
+    nodes_iter = chain(unlabeled_nodes, labeled_nodes)
+    num_nodes = len(unlabeled_nodes) + len(labeled_nodes)
     ancestors = {node: all_ancestors_of(node)
                  for node
-                 in chain(unlabeled_nodes, labeled_nodes)}
+                 in tqdm(nodes_iter, total = num_nodes)}
 
+    print("Computing related pairs")
+    all_pairs = product(unlabeled_nodes, labeled_nodes)
+    num_pairs = len(unlabeled_nodes) * len(labeled_nodes)
     return [(unlabeled, labeled) for unlabeled, labeled
-            in product(unlabeled_nodes, labeled_nodes)
+            in tqdm(all_pairs, total = num_pairs)
             if (unlabeled != labeled and
                 not ancestors[unlabeled].isdisjoint(ancestors[labeled]))]
 
@@ -155,12 +171,7 @@ def generate_classifier(population, labeled_nodes, genome_generator,
         node.suspected_father = None
         node.suspected_father_id = None
     if 0 < iterations:
-        shared_to_directory(population, labeled_nodes, genome_generator,
-                            recombinators, directory, clobber = clobber,
-                            iterations = iterations,
-                            min_segment_length = min_segment_length,
-                            generations_back_shared = generations_back_shared,
-                            non_paternity = non_paternity)
+        exit("Python implementation no longer supports simulation")
 
 
     
@@ -181,7 +192,7 @@ def cryptic_parameters(id_map, labeled_nodes, related_pairs):
     recomb_dir = abspath(join(dirname(__file__),
                               "../data/recombination_rates/"))
     cm_data = centimorgan_data_from_directory(recomb_dir)
-    ibd_detector = SharedSegmentDetector(0, 5, cm_data)
+    ibd_detector = SharedSegmentDetector(cm_data, 0, 5)
 
     # We try to only include the labeled nodes the analyst would have
     # access to This only works if we use the deterministic random
@@ -203,67 +214,55 @@ def cryptic_parameters(id_map, labeled_nodes, related_pairs):
         genome_b = node_b.genome
         length = ibd_detector.shared_segment_length(genome_a, genome_b)
         lengths.append(length)
-    np_lengths = np.array(lengths, dtype = np.uint64)
+    np_lengths = np.array(lengths, dtype = np.float64)
     params = fit_hurdle_gamma(np_lengths)
     assert all(x is not None for x in params)
     return params
 
-def shared_to_directory(population, labeled_nodes, genome_generator,
-                        recombinators, directory, min_segment_length = 0,
-                        clobber = True, iterations = 1000,
-                        generations_back_shared = 7,
-                        non_paternity = 0.0):
 
-    labeled_nodes = set(labeled_nodes)
-    unlabeled_nodes = chain.from_iterable(generation.members
-                                          for generation
-                                          in population.generations[-3:])
-    unlabeled_nodes = set(unlabeled_nodes) # - labeled_nodes
-    print("Finding related pairs.")
-    pairs = related_pairs(unlabeled_nodes, labeled_nodes, population,
-                          generations_back_shared)
-    print("{} related pairs.".format(len(pairs)))
-    print("Opening file descriptors.")
-    if clobber:
-        mode = "w"
-    else:
-        mode = "a"
-    fds = {node: open(join(directory, str(node._id)), mode)
-           for node in labeled_nodes}
-    print("Calculating shared lengths.")
-    for i in range(iterations):
-        print("iteration {}".format(i))
-        print("Cleaning genomes.")
-        population.clean_genomes()
-        print("Generating genomes")
-        generate_genomes(population, genome_generator, recombinators, 3,
-                         true_genealogy = False)
-        print("Calculating shared length")
-        _calculate_shared_to_fds(pairs, fds, min_segment_length)
-    for fd in fds.values():
-        fd.close()
-        
-def _calculate_shared_to_fds(pairs, fds, min_segment_length):
-    """
-    Calculate the shared length between the pairs, and store the
-    shared length in the given directory. Each labeled node has a file
-    in the given directory. The files contain tab separated entries,
-    where the first entry is the unlabeled node id, and the second
-    entry is the amount of shared material.
-    """
-    shared_iter = ((unlabeled, labeled,
-                    shared_segment_length_genomes(unlabeled.genome,
-                                                  labeled.genome,
-                                                  min_segment_length))
-                   for unlabeled, labeled in pairs)
-    for unlabeled, labeled, shared in shared_iter:
-        fd = fds[labeled]
-        fd.write("{}\t{}\n".format(unlabeled._id, shared))
+def adjust_shape_scale(shape, scale):
+    std_dev = sqrt(shape * (scale ** 2))
+    if  std_dev >= 15:
+        return (shape, scale)
+    adjustment_factor = (15 / std_dev) ** 2
+    return ((shape / adjustment_factor), scale * adjustment_factor)
+
+# TODO: Factor out the common code from this function and
+# classifier_from_directory
+def classifier_from_file(filename, id_mapping):
+    deserializer = BinarySimulationDeserializer(filename)
+    distributions = dict()
+    labeled_nodes = deserializer.anchors
+    for anchor in tqdm(labeled_nodes):
+        anchor_data = list(deserializer.anchor_shared(anchor).items())
+        fit_data = np.array([x[1] for x in anchor_data])
+        np_fit = fit_hurdle_gamma_vector(fit_data)
+        fit = [x.tolist() for x in np_fit]
+        shapes, scales, zero_probs, insufficient = fit
+        unlabeled = [x[0] for x in anchor_data]
+        zipped = zip(unlabeled, shapes, scales, zero_probs, insufficient)
+        for unlabeled, shape, scale, zero_prob, ins in zipped:
+            if ins:
+                continue
+            shape, scale = adjust_shape_scale(shape, scale)
+            params = HurdleGammaParams(shape, scale, zero_prob)
+            distributions[unlabeled, anchor] = params
+    related_pairs = set(distributions.keys())
+    hybrid_distributions = transform_distributions(distributions)
+    del distributions
+    cryptic_params = cryptic_parameters(id_mapping, labeled_nodes,
+                                        related_pairs)
+    return LengthClassifier(hybrid_distributions, labeled_nodes, cryptic_params)
 
 def classifier_from_directory(directory, id_mapping):
     distributions = distributions_from_directory(directory, id_mapping)
+    related_pairs = set(distributions.keys())
+    hybrid_distributions = transform_distributions(distributions)
+    del distributions
     labeled_nodes = set(int(filename) for filename in listdir(directory))
-    return LengthClassifier(distributions, labeled_nodes)
+    cryptic_params = cryptic_parameters(id_mapping, labeled_nodes,
+                                        related_pairs)
+    return LengthClassifier(hybrid_distributions, labeled_nodes, cryptic_params)
 
 def distributions_from_directory(directory, id_mapping):
     """
@@ -271,7 +270,7 @@ def distributions_from_directory(directory, id_mapping):
     calculate_shared_to_directory.
     """
     distributions = dict()
-    for labeled_filename in progressbar(listdir(directory)):
+    for labeled_filename in tqdm(listdir(directory)):
         lengths = defaultdict(list)
         labeled = int(labeled_filename)
         with open(join(directory, labeled_filename), "r") as labeled_file:
@@ -297,26 +296,37 @@ def distributions_from_directory(directory, id_mapping):
                 lengths[unlabeled].append(shared_float)
         for unlabeled, lengths in lengths.items():
             shape, scale, zero_prob = fit_hurdle_gamma(np.array(lengths,
-                                                                dtype = np.uint32))
+                                                                dtype = np.float64))
             if shape is None:
                 continue
+            shape, scale = adjust_shape_scale(shape, scale)
             params = HurdleGammaParams(shape, scale, zero_prob)
             distributions[unlabeled, labeled] = params
     return distributions
-    
-def shared_segment_length_genomes(genome_a, genome_b, minimum_length):
-    lengths = common_segment_lengths(genome_a, genome_b)
-    seg_lengths = (x for x in lengths if x >= minimum_length)
-    return sum(seg_lengths)
 
-def shared_stats_genomes(genome_a, genome_b, minimum_length):
-    lengths = [x for x in common_segment_lengths(genome_a, genome_b)
-               if x >= minimum_length]
-    num_segments = len(lengths)
-    if num_segments == 0:
-        return (0.0, 0)
-    return (sum(lengths) / num_segments, num_segments)
-    
-def _shared_segment_length(node_a, node_b, minimum_length):
-    return shared_segment_length_genomes(node_a.genome, node_b.genome,
-                                          minimum_length)
+def transform_distributions(distributions):
+    """
+    Transform distributions from dictionary to hybrid diction/array
+    representation.
+    """
+    alt_dist = defaultdict(list)
+    for ((query_node, labeled_node), params) in distributions.items():
+        alt_dist[query_node].append((labeled_node, params))
+    for dist in alt_dist.values():
+        dist.sort(key = lambda x: x[0])
+
+    # Constructing pair_dist like this allows us to store the keys of
+    # alt_dist somewhere so we can delete them during iteration to
+    # save memory
+    pair_dist = {x: None for x in alt_dist.keys()}
+    for query_node in pair_dist.keys():
+        labeled_dist_list = alt_dist[query_node]
+        del alt_dist[query_node]
+        labeled, params = zip(*labeled_dist_list)
+        shape, scale, zero_prob = unpack_params(params)
+        np_labeled = np.array(labeled, dtype = np.uint32)
+        pair_dist[query_node] = DistributionData(np_labeled, shape, scale,
+                                                 zero_prob)
+
+            
+    return pair_dist

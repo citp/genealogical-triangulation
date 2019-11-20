@@ -1,13 +1,8 @@
-from math import floor
-from random import shuffle, uniform, choice, random, sample
+from random import shuffle, uniform, choice, sample
 from itertools import chain
 from types import GeneratorType
 from pickle import Unpickler
-from collections import defaultdict
 
-import json
-
-from random_queue import RandomQueue
 from generation import Generation
 from sex import Sex
 
@@ -89,32 +84,28 @@ class Population:
                 for y in range(x, len(members)))
 
 
-class HierarchicalIslandPopulation(Population):
+class IslandPopulation(Population):
     """
     A population where mates are selected based on
     locality. Individuals exists on "islands", and will search for
     mates from a different island with a given switching probability.
     """
-    def __init__(self, island_tree, *args, **kwargs):
+    def __init__(self, island_model, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._island_tree = island_tree
+        self._island_model = island_model
         # Assume existing members of the tree are a part of the founders
-        if len(island_tree.individuals) > 0:
+        if len(island_model.individuals) > 0:
             assert len(self._generations) is 0
-            self._generations.append(Generation(island_tree.individuals))
+            self._generations.append(Generation(island_model.individuals))
 
 
     def _pick_island(self, individual):
-        island = self._island_tree.get_island(individual)
-        # Traverse upward
-        while uniform(0, 1) < island.switch_probability:
-            island = island.parent
-            if island.parent is None:
-                break
-        # Now drill down into final island.
-        while not island.is_leaf:
-            island = choice(list(island.islands))
-        return island
+        current_island = self._island_model.get_island(individual)
+        if uniform(0, 1) < current_island.switch_probability:
+            candidate_islands = set(self._island_model.islands)
+            candidate_islands.remove(current_island)
+            return choice(tuple(candidate_islands))
+        return current_island
 
     def _island_members(self, generation_members):
         """
@@ -122,13 +113,9 @@ class HierarchicalIslandPopulation(Population):
         from generation_members.
         """
         if isinstance(generation_members, GeneratorType):
-            # If generation_members is a generator, then all the
-            # elements are "used up" on the first leaf. We need to
-            # iterate over the elements of generation_members multiple
-            # time.
             generation_members = list(generation_members)
         members = dict()
-        for leaf in self._island_tree.leaves:
+        for leaf in self._island_model.islands:
             m = leaf.individuals.intersection(generation_members)
             members[leaf] = m
         return members
@@ -139,84 +126,71 @@ class HierarchicalIslandPopulation(Population):
         """
         for member in generation.members:
             island = self._pick_island(member)
-            self._island_tree.move_individual(member, island)
+            self._island_model.move_individual(member, island)
             
 
-    def new_generation(self, size = None, non_paternity_rate = 0,
-                       adoption_rate = 0, unknown_mother_rate = 0,
-                       unknown_father_rate = 0, multi_partner_probs = None):
+    def new_generation(self, node_generator, size = None,
+                       non_paternity_rate = 0, adoption_rate = 0,
+                       unknown_mother_rate = 0, unknown_father_rate =0,
+                       monogamy_rate = 0.0):
         """
         Generates a new generation of individuals from the previous
         generation. If size is not passed, the new generation will be
         the same size as the previous generation.
         """
+        assert 0.0 <= monogamy_rate <= 1.0
         if size is None:
             size = self._generations[-1].size
         self.migrate_generation(self._generations[-1])
-        previous_generation = list(self._generations[-1].members)
-        shuffle(previous_generation)
-        boundary = len(previous_generation) // 2
-        seekers = RandomQueue(previous_generation[:boundary])
-        mates = set(previous_generation[boundary:])
-        mate_set = defaultdict(set)
-        mate_attempts = defaultdict(int)
-        available_mates = self._island_members(mates)
-        pairs = []
-        while len(seekers) > 0:
-            seeker = seekers.dequeue()
-            if sum(len(members) for members in available_mates.values()) is 0:
-                break
-            island = self._island_tree.get_island(seeker)
-            potential_mates = [mate for mate in available_mates[island]
-                               if mate.sex != seeker.sex]
-            shuffle(potential_mates)
-            for potential_mate in potential_mates:
-                share_mother = (seeker.mother is not None and
-                                potential_mate.mother == seeker.mother)
-                share_father = (seeker.father is not None and
-                                potential_mate.father == seeker.father)
-                if not share_mother and not share_father:
-                    # TODO insert these pairs with male node first.
-                    pairs.append((seeker, potential_mate))
-                    existing_mates = mate_set[seeker]
-                    existing_mates.add(potential_mate)
-                    num_mates = len(existing_mates)
-                    if (multi_partner_probs is not None and
-                        multi_partner_probs[num_mates] < random()):
-                        seekers.enqueue(seeker)
-                    else:
-                        available_mates[island].remove(potential_mate)
-                    break
-            mate_attempts[seeker] += 1
-        num_twins = int(0.003 * size)
-        non_twin_size = size - num_twins
-        min_children = floor(non_twin_size / len(pairs))
-        # Number of families with 1 more than the min number of
-        # children. Because only having 2 children per pair only works
-        # if there is an exact 1:1 ratio of men to women.
-        extra_child = non_twin_size - min_children * len(pairs)
-        node_generator = pairs[0][0].node_generator
+        previous_generation = set(self._generations[-1].members)
+
+        monogamous_map = dict()
+        random_map = dict()
+        for island in self._island_model.islands:
+            members = list(previous_generation.intersection(island.individuals))
+            shuffle(members)
+            men = [x for x in members if x.sex == Sex.Male]
+            women = [x for x in members if x.sex == Sex.Female]
+
+            monogamy_cutoff = min(int(monogamy_rate * len(men)),
+                                  int(monogamy_rate * len(women)))
+            monogamous_men = men[:monogamy_cutoff]
+            non_monogamous_men = men[monogamy_cutoff:]
+
+
+            monogamous_women = women[:monogamy_cutoff]
+            non_monogamous_women = women[monogamy_cutoff:]
+
+            for male, female in zip(monogamous_men, monogamous_women):
+                monogamous_map[male] = female
+                monogamous_map[female] = male
+
+            for male in non_monogamous_men:
+                random_map[male] = non_monogamous_women
+
+            for female in non_monogamous_women:
+                random_map[female] = non_monogamous_men
+
         new_nodes = []
-        for i, (seeker, mate) in enumerate(pairs):
-            if seeker.sex == Sex.Male:
-                man = seeker
-                woman = mate
+        num_twins = int(0.003 * size)
+        pre_twins_size = size - num_twins
+        previous_generation_list = list(previous_generation)
+        while len(new_nodes) < pre_twins_size:
+            parent_a = choice(previous_generation_list)
+            if parent_a in monogamous_map:
+                parent_b = monogamous_map[parent_a]
             else:
-                man = mate
-                woman = seeker
+                candidate_parents = random_map[parent_a]
+                if len(candidate_parents) == 0:
+                    continue
+                parent_b = choice(candidate_parents)
 
-            if i < extra_child:
-                extra = 1
-            else:
-                extra = 0
-                
-            # Child will be based at mate's island
-            island = self._island_tree.get_island(mate)
-            for i in range(min_children + extra):
-                child = node_generator.generate_node(man, woman)
-                new_nodes.append(child)
-                self.island_tree.add_individual(island, child)
-
+            father, mother = _sort_sex(parent_a, parent_b)
+            child = node_generator.generate_node(father, mother)
+            island = self._island_model.get_island(father)
+            self._island_model.add_individual(island, child)
+            new_nodes.append(child)
+        
         apportioned = apportion(new_nodes, non_paternity_rate, adoption_rate)
         non_paternity, adopted = apportioned
         already_error = non_paternity.union(adopted)
@@ -236,7 +210,7 @@ class HierarchicalIslandPopulation(Population):
         men_by_island = {island: list(men) for island, men
                          in men_by_island.items()}
         for node in non_paternity:
-            child_island = self._island_tree.get_island(node)
+            child_island = self._island_model.get_island(node)
             suspected_father = choice(men_by_island[child_island])
             node.set_suspected_father(suspected_father)
 
@@ -244,7 +218,7 @@ class HierarchicalIslandPopulation(Population):
         women_by_island = {island: list(women) for island, women
                            in women_by_island.items()}
         for node in adopted:
-            child_island = self._island_tree.get_island(node)
+            child_island = self._island_model.get_island(node)
             suspected_father = choice(men_by_island[child_island])
             node.set_suspected_father(suspected_father)
             suspected_mother = choice(women_by_island[child_island])
@@ -253,8 +227,8 @@ class HierarchicalIslandPopulation(Population):
         # Generate twins. Twins will essentially be copies of their sibling
         for template_node in sample(new_nodes, num_twins):
             twin = node_generator.twin_node(template_node)
-            island = self._island_tree.get_island(template_node)
-            self._island_tree.add_individual(island, twin)
+            island = self._island_model.get_island(template_node)
+            self._island_model.add_individual(island, twin)
             new_nodes.append(twin)
 
 
@@ -284,6 +258,14 @@ def apportion(original, *rates):
             remainder = [node for node in original if node not in assigned]
         
     return tuple(subsets)
+
+def _sort_sex(a, b):
+    if a.sex == Sex.Male:
+        assert b.sex == Sex.Female
+        return (a, b)
+    else:
+        assert b.sex == Sex.Male
+        return (b, a)
         
 
 def fix_twin_parents(population):
@@ -300,6 +282,7 @@ def fix_twin_parents(population):
         member._suspected_children = []
         member.set_suspected_mother(member.suspected_mother)
         member.set_suspected_father(member.suspected_father)
+                    
 
 class PopulationUnpickler(Unpickler):
     
@@ -308,4 +291,3 @@ class PopulationUnpickler(Unpickler):
         for member in result.members:
             member._resolve_parents()
         return result
-

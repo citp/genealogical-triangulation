@@ -174,8 +174,9 @@ def error_between_nodes(node_a, node_b, generation_map, suspected = True):
     where error occurs from node_a to the recent common ancestor, and
     the second being the same from node_b.
     """
-    rca, dist = recent_common_ancestor(node_a, node_b, generation_map,
-                                       suspected)
+    rca, _gen_dist, _total_dist = recent_common_ancestor(node_a, node_b,
+                                                         generation_map,
+                                                         suspected)
     if rca is None:
         Exception("Given nodes are not related. This error may occur if suspected parameter is incorrect")
     node_a_error = error_on_path(node_a, rca, suspected)

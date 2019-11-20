@@ -19,7 +19,7 @@ use genome::ordered_float::OrderedFloat;
 use genome::genome::{Genome, CHROMOSOMES};
 use genome::diploid::Diploid;
 
-static RECOMB_FILES: &'static [(u32, &'static str)] = &[(1, "genetic_map_chr1_b36.txt"), (2, "genetic_map_chr2_b36.txt"), (3, "genetic_map_chr3_b36.txt"), (4, "genetic_map_chr4_b36.txt"), (5, "genetic_map_chr5_b36.txt"), (6, "genetic_map_chr6_b36.txt"), (7, "genetic_map_chr7_b36.txt"), (8, "genetic_map_chr8_b36.txt"), (9, "genetic_map_chr9_b36.txt"), (10, "genetic_map_chr10_b36.txt"), (11, "genetic_map_chr11_b36.txt"), (12, "genetic_map_chr12_b36.txt"), (13, "genetic_map_chr13_b36.txt"), (14, "genetic_map_chr14_b36.txt"), (15, "genetic_map_chr15_b36.txt"), (16, "genetic_map_chr16_b36.txt"), (17, "genetic_map_chr17_b36.txt"), (18, "genetic_map_chr18_b36.txt"), (19, "genetic_map_chr19_b36.txt"), (20, "genetic_map_chr20_b36.txt"), (21, "genetic_map_chr21_b36.txt"), (22, "genetic_map_chr22_b36.txt")];
+pub static RECOMB_FILES: &'static [(u32, &'static str)] = &[(1, "genetic_map_chr1_b36.txt"), (2, "genetic_map_chr2_b36.txt"), (3, "genetic_map_chr3_b36.txt"), (4, "genetic_map_chr4_b36.txt"), (5, "genetic_map_chr5_b36.txt"), (6, "genetic_map_chr6_b36.txt"), (7, "genetic_map_chr7_b36.txt"), (8, "genetic_map_chr8_b36.txt"), (9, "genetic_map_chr9_b36.txt"), (10, "genetic_map_chr10_b36.txt"), (11, "genetic_map_chr11_b36.txt"), (12, "genetic_map_chr12_b36.txt"), (13, "genetic_map_chr13_b36.txt"), (14, "genetic_map_chr14_b36.txt"), (15, "genetic_map_chr15_b36.txt"), (16, "genetic_map_chr16_b36.txt"), (17, "genetic_map_chr17_b36.txt"), (18, "genetic_map_chr18_b36.txt"), (19, "genetic_map_chr19_b36.txt"), (20, "genetic_map_chr20_b36.txt"), (21, "genetic_map_chr21_b36.txt"), (22, "genetic_map_chr22_b36.txt")];
 
 pub struct RecombinatorPair {
     pub male: Recombinator,
@@ -224,7 +224,7 @@ fn adjust_centimorgans(rows: &Vec<(u32, f64, f64)>, multiplier: f64) ->
                .collect()
 }
 
-fn read_recombination_file(filename: &str) -> Vec<(u32, f64, f64)> {
+pub fn read_recombination_file(filename: &str) -> Vec<(u32, f64, f64)> {
     /*
     Reads a recombination file and returns the rows, with columns
     converted to the appropriate numeric types.

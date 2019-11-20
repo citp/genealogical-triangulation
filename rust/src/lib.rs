@@ -6,6 +6,8 @@ extern crate rand;
 extern crate rgsl;
 extern crate fnv;
 extern crate pbr;
+extern crate byteorder;
+extern crate rayon;
 
 
 pub mod genome;

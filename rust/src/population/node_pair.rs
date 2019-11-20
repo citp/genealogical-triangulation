@@ -9,6 +9,7 @@ pub struct NodeIdPair {
     pub unlabeled: u32
 }
 
+#[derive(Clone)]
 pub struct RelatedPair {
     pub labeled: Rc<RefCell<Node>>,
     pub unlabeled: Rc<RefCell<Node>>

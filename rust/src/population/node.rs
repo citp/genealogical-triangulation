@@ -6,8 +6,6 @@ use std::io::prelude::*;
 use std::fs::File;
 use std::cmp;
 
-extern crate serde_json;
-
 use genome::genome::Genome;
 use population::node_pair::RelatedPair;
 

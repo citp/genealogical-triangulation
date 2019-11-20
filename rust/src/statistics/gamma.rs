@@ -1,9 +1,10 @@
 use rand;
 use rgsl::psi::diagamma;
 use rgsl::psi::trigamma;
-// TODO: Fix depricated in this file
-#[allow(deprecated)]
-use rand::distributions::{IndependentSample, Range};
+
+use rand::distributions::{Distribution, Uniform};
+
+const SUFFICIENT_DATA_POINTS: usize = 5;
 
 #[derive(PartialEq, Debug, Clone, Copy)]
 pub struct GammaParams {
@@ -18,17 +19,22 @@ pub struct HurdleGammaParams {
     pub scale: f64
 }
 
+impl HurdleGammaParams {
+    pub fn has_nan_parameters(&self) -> bool {
+        self.zero_prob.is_nan() || self.shape.is_nan() || self.scale.is_nan()
+    }
+}
+
 
 pub fn fit_gamma(data: &[f64]) -> GammaParams {
     let mut sum: f64 = 0.0;
     let mut sum_of_log: f64 = 0.0;
-    let noise: Range<f64> = Range::new(1e-8, 10000.0);
+    let noise = Uniform::new(1e-8, 10000.0);
     let mut rng = rand::thread_rng();
     for val in data {
-        #[allow(deprecated)]
-        let noisey_data = *val + noise.ind_sample(&mut rng);
-        sum += noisey_data;
-        sum_of_log += noisey_data.ln();
+        let noisy_data = *val + noise.sample(&mut rng);
+        sum += noisy_data;
+        sum_of_log += noisy_data.ln();
     }
     let data_mean = sum / (data.len() as f64);
     let mean_of_logs = sum_of_log / (data.len() as f64);
@@ -50,13 +56,19 @@ pub fn fit_gamma(data: &[f64]) -> GammaParams {
     GammaParams { shape: shape, scale: data_mean / shape }
 }
 
-pub fn fit_hurdle_gamma(data: &[u64]) -> HurdleGammaParams {
+pub fn fit_hurdle_gamma(data: &[u64]) -> Option<HurdleGammaParams> {
     let nonzero: Vec<_> = data.iter().filter(|&x| *x != 0)
         .map(|x| *x as f64)
         .collect();
+    if nonzero.len() < SUFFICIENT_DATA_POINTS {
+        return None;
+    }
     let zero_prob = (data.len() - nonzero.len()) as f64 / data.len() as f64;
     let gamma = fit_gamma(&nonzero);
-    HurdleGammaParams {zero_prob: zero_prob,
+    if gamma.scale.is_nan() || gamma.shape.is_nan() {
+        return None;
+    }
+    Some(HurdleGammaParams {zero_prob: zero_prob,
                        shape: gamma.shape,
-                       scale: gamma.scale}
+                       scale: gamma.scale})
 }

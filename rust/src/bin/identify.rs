@@ -3,6 +3,8 @@ extern crate bincode;
 extern crate rand;
 #[macro_use]
 extern crate clap;
+extern crate serde_json;
+//extern crate fnv;
 
 // NOTE: The identification code in Rust is not used at this time. The python version of this code is used.
 
@@ -13,6 +15,7 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use std::time::Instant;
 
+//use fnv::FnvHashMap;
 //TODO: Update random library
 #[allow(deprecated)]
 use rand::{thread_rng, sample};
@@ -20,11 +23,15 @@ use bincode::deserialize;
 use clap::{Arg, App};
 
 use genetic_privacy::population::node::{import_json, Node, Population};
+//use genetic_privacy::population::node_pair::NodeIdPair;
 use genetic_privacy::identify::distributions::Distribution;
 use genetic_privacy::genome::recombinator::recombinators_from_directory;
 use genetic_privacy::genome::genome::RecombGenomeGenerator;
 use genetic_privacy::genome::population_genomes::generate_genomes;
 use genetic_privacy::identify::bayes::BayesDeanonymize;
+use genetic_privacy::genome::cm::CmConverter;
+//use genetic_privacy::statistics::fit::load_python_json;
+
 
 fn main() {
     let matches = App::new("Run identification")
@@ -50,6 +57,8 @@ fn main() {
     file.read_to_end(&mut distribution_data).unwrap();
     println!("Loading distributions");
     let distribution: Distribution = deserialize(&distribution_data).unwrap();
+    //distribution.distributions = convert_hashmap(load_python_json().unwrap());
+
 
     println!("Loading recombination data");
     let recombinators = recombinators_from_directory(matches.value_of("RECOMBINATORS").unwrap());
@@ -59,13 +68,14 @@ fn main() {
     }
     
     let genome_generator = RecombGenomeGenerator::new(&chrom_lengths);
+    let cm_converter = CmConverter::new(matches.value_of("RECOMBINATORS").unwrap());
 
     println!("Generating fresh genomes");
     generate_genomes(&population, &genome_generator, &recombinators, true, 3);
 
     
     println!("Loading bayes identifier");
-    let bayes = BayesDeanonymize::new(&population, distribution);
+    let bayes = BayesDeanonymize::new(&population, distribution, cm_converter);
     
     let can_identify = with_genomes(&population);
     let mut rng = thread_rng();
@@ -73,10 +83,18 @@ fn main() {
     #[allow(deprecated)]
     let to_identify = sample(&mut rng, can_identify, num_to_identify);
 
+//    let mut to_identify = Vec::new();
+//    for node_ref in &population.members {
+//        let node = node_ref.borrow();
+//        if node.id ==  946427 {
+//            to_identify.push(node_ref.clone());
+//        }
+//    }
+
     println!("Identifying {} nodes", to_identify.len());
     let correct = identify_individuals(&to_identify, &bayes);
     println!("{}% correctly identified",
-             correct as f64 / to_identify.len() as f64);
+             (correct as f64 / to_identify.len() as f64) * 100.0);
 }
 
 fn with_genomes(population: &Population) -> Vec<Rc<RefCell<Node>>> {
@@ -98,7 +116,8 @@ fn identify_individuals(targets: &[Rc<RefCell<Node>>],
         println!("Identifying node {} with ID: {}", i, target_node.id);
         let target_genome = target_node.genome.as_ref().unwrap();
         let identify_time = Instant::now();
-        let sibling_group = bayes.identify(target_genome, 5000000);
+        //let sibling_group = bayes.identify(target_genome, 5000000);
+        let sibling_group = bayes.identify_alt(target_genome);
 
         let ids = group_ids(&sibling_group);
         println!("Identified group: {:?}", ids);
@@ -117,3 +136,11 @@ fn identify_individuals(targets: &[Rc<RefCell<Node>>],
 fn group_ids(group: &[Rc<RefCell<Node>>]) -> HashSet<u32> {
     return group.iter().map(|node| node.borrow().id).collect();
 }
+
+//fn convert_hashmap<V>(mut input_map: HashMap<NodeIdPair, V>) -> FnvHashMap<NodeIdPair, V> {
+//    let mut map = FnvHashMap::default();
+//    for (key, value) in input_map.drain() {
+//        map.insert(key, value);
+//    }
+//    map
+//}

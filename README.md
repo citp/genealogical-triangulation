@@ -29,9 +29,9 @@ Setup
 * run `fetch.sh` in `data/recombination_rates` directory. This will
   fetch the appropriate recombination data from the HapMap project.
 * Install the python dependencies listed above.
-* run `python3 setup.py build_ext --inplace` in the predict
-  directory. This will need to be run whenever any of the .pyx files
-  are modified.
+* run `python3 setup.py build_ext --inplace` in the "python" directory
+  to build the cython modules. This will need to be run whenever any
+  of the .pyx files are modified.
 
 Running
 =======
@@ -44,9 +44,9 @@ Work flow
 The typical work flow is a three step process
 
 1. Generate population - `python3 generate_population.py --help`
-2. Export population to Rust - `python3 run_classify_relationship.py --help`
+2. Export population to Rust - `python3 export_population.py --help`
 4. Run simulations in rust - `cargo run --release --bin simulate -- --help`
-5. Import output from simulations - `python3 run_classify_relationship.py --help` (see the `--recover` option to recover the data from the simulation)
+5. Import output from simulations - `python3 import_simulation.py --help`
 6. Identify - `python3 evaluate_deanonymize.py --help`
 
 Commands
@@ -65,33 +65,23 @@ pickle format.
 
 ### Simulate population to generate distributions
 
-To run experiments in rust first convert the population to a format rust can understand.: `python3
-run_classify_relationship.py population.pickle work_dir 100
---num_labeled_nodes 150 --to_json file_for_rust.json`
+To run experiments in rust first convert the population to a format the simulation can understand.: `python3
+export_population.py population.pickle file_for_simulation.json --num-anchor-nodes 150`
 
-
-This command will pick 150 nodes from the last generation and mark
-them as "labeled" (anchor nodes in the terminology of our paper). 
+This command will pick 150 nodes from the last three generations and mark
+them as anchors. 
 It will then output a json file for the rust simulator to read.
-Then run `cargo run --release --bin simulate file_for_rust.json recombination_directory output_directory`
+Then run `cargo run --release --bin simulate file_for_simulation.json recombination_directory output_file`
 Then it will perform 1000 experiments to sample
-from the simulated empirical distributions from the (labeled,
-unlabeled) pairs. A directory `output_directory` will be created with the simulation data. This tends to take on the order of days to run. If it interrupted, it can be resumed using the same `cargo` command.
+from the simulated empirical IBD distributions for the (labeled,
+unlabeled) pairs. A file `output_file` will be created with the simulation data. Simulation can run for days, depending on your population parameters and hardware. The simulations from the paper took 20-60 hours to run.
 
-To fit the hurdle gamma distributions, run `run_classify_relationship.py population.pickle output_directory 0
---recover --output_pickle distributions.pickle`. The distributions will be saved to `distributions.pickle`.
-
-If you provide the recover option, the `--num_labeled_nodes` option will be ignored, as
-the labeled nodes will be determined by `work_dir`. Recovering will
-try to do `num_iteration` new iterations, on top of what may already
-be in the `work_dir`. If `num_iterations` is 0, no experiments will be
-run, but rather the distributions will be calculated immediately.
-
+To create the model (ie fit the hurdle-gamma parameters), run `import_simulation.py population.pickle work_file --output-pickle model.pickle`. The model will be saved to `model.pickle`.
 
 ### Identify individuals
 
-The final step is identifying unlabeled individuals.
+The final step is identifying individuals.
 
 Running `python3 evaluate_deanonymize.py population.pickle
-distributions.pickle -n 10` will try to identify 10 random unlabeled
+model.pickle -n 10` will try to identify 10 random unlabeled
 individuals in the population.

@@ -60,7 +60,7 @@ generate_population.py ../data/your_tree_file ../data/recombination_rates/
 --generation_size 1000 --num_generations 10 --output
 population.pickle` A population with 10 generations each with 1000
 members will be generated and saved to population.pickle with Python's
-pickle format.
+pickle format. In the paper the generation size was 100,000.
 
 
 ### Simulate population to generate distributions

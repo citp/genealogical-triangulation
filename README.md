@@ -1,9 +1,16 @@
 Getting Started
 ===============
 
-This project requires both [Rust](https://www.rust-lang.org/) and [Python](https://www.python.org/). Populations are generated in Python, then exported to a json file. Rust reads the population file, then runs simulations to generate IBD data, outputting the data to a directory. The output is then read in on the python side, fit to hurdle-gamma distributions and serialized. Identification tasks are performed in Python using the hurdle-gamma distributions.
+This project requires both [Rust](https://www.rust-lang.org/) and
+[Python](https://www.python.org/). Populations are generated in
+Python, then exported to a json file. Rust reads the population file,
+then runs simulations to generate IBD data, outputting the data to a
+file. The output is then read in on the python side and fit to
+generate a model. Identification tasks are performed in Python using
+the generated model.
 
-Identification will require 16+GB of RAM for populations with generations of 100k individuals.
+Identification will require 16+GB of RAM for populations with
+generations of 100k individuals.
 
 System requirements
 -----------
@@ -43,11 +50,16 @@ Work flow
 
 The typical work flow is a three step process
 
-1. Generate population - In the `python` directory - `python3 generate_population.py --help`
-2. Export population to Rust - In the `python` directory - `python3 export_population.py --help`
-4. Run simulations in rust - In the `rust` directory - `cargo run --release --bin simulate -- --help`
-5. Import output from simulations - In the `python` directory - `python3 import_simulation.py --help`
-6. Identify - In the `python` directory - `python3 evaluate_deanonymize.py --help`
+1. Generate population - In the `python` directory - `python3
+generate_populatio n.py --help`
+2. Export population to Rust - In the `python` directory - `python3
+   export_population.py --help`
+4. Run simulations in rust - In the `rust` directory - `cargo run
+   --release --bin simulate -- --help`
+5. Import output from simulations - In the `python` directory -
+   `python3 import_simulation.py --help`
+6. Identify - In the `python` directory - `python3
+   evaluate_deanonymize.py --help`
 
 Commands
 --------

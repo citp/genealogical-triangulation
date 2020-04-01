@@ -1,3 +1,24 @@
+Identification of Anonymous DNA Using Genealogical Triangulation
+===============
+
+Consumer genetics databases hold dense genotypes of millions of
+people, and the number is growing quickly. In 2018, law enforcement
+agencies began using such databases to identify anonymous DNA via
+long-range familial searches. We show that this technique is far more
+powerful if combined with a genealogical database of the type
+collected by online ancestry services. We present a "genealogical
+triangulation" algorithm and study its effectiveness on simulated
+datasets. We show that for over 50% of targets, their anonymous DNA
+can be identified (matched to the correct individual or same-sex
+sibling) when the genetic database includes just 1% of the
+population. We also show the effectiveness of "snowball
+identification" in which a successful identification adds to the
+genetic genealogical database, increasing the identification accuracy
+for future instances. We discuss our technique’s potential to enhance
+law enforcement capabilities as well as its privacy risks.
+
+https://www.biorxiv.org/content/10.1101/531269v1
+
 Getting Started
 ===============
 
